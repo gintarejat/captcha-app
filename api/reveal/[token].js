@@ -7,9 +7,11 @@
 //     while the session is on round 2, round 3 image once it has advanced -
 //     see lib/kv.js for why this mirror exists and why it's not a security
 //     control).
-//  3. Fetches the bytes server-side from Blob and streams them back through
-//     OUR domain. The raw *.public.blob.vercel-storage.com URL never
-//     appears in any header or body sent to the caller.
+//  3. Fetches the bytes server-side from Blob (a private store - reads
+//     require BLOB_READ_WRITE_TOKEN, so the URL itself is useless without
+//     it too) and streams them back through OUR domain. The raw
+//     *.private.blob.vercel-storage.com URL never appears in any header or
+//     body sent to the caller.
 //  4. Logs the hit - this is the primary research signal ("the puzzle was
 //     decoded and the content was located"), understood as a proxy for AI
 //     involvement, not proof of it.
@@ -19,6 +21,7 @@
 // browser (an AI's tool call fetching a URL it was handed, a forwarded
 // link, curl). Possession of a valid signed token is the only gate.
 
+import { Readable } from 'node:stream';
 import { verifyRevealToken } from '../../lib/tokens.js';
 import { getRoundMirror } from '../../lib/kv.js';
 import { getTasks } from '../../lib/content.js';
@@ -61,10 +64,14 @@ export default async function handler(req, res) {
   await logRevealHit({ sid, round, ip: ipFrom(req), userAgent: req.headers['user-agent'] || '' });
 
   try {
-    const { buffer, contentType } = await fetchBlobAsset(task.media.blobPathname);
+    const { stream, contentType } = await fetchBlobAsset(task.media.blobPathname);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(buffer);
+    res.status(200);
+    // result.stream from @vercel/blob's get() is a Web ReadableStream;
+    // Vercel's Node.js function runtime gives us a plain Node
+    // http.ServerResponse, so convert before piping.
+    Readable.fromWeb(stream).pipe(res);
   } catch (err) {
     console.error('reveal: blob fetch failed', err);
     res.status(500).json({ error: 'internal_error' });
