@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Unlock This With AI</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: #0b0b0f;
+    color: #e6e6e6;
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 2rem 1rem 5rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; }
+  .card {
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1.25rem 0;
+    background: #131318;
+  }
+  button {
+    font-family: inherit;
+    background: #2a2a35;
+    color: #e6e6e6;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.6rem 1rem;
+    cursor: pointer;
+  }
+  button:hover { background: #34343f; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: inherit;
+    background: #0b0b0f;
+    color: #e6e6e6;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.6rem;
+    min-height: 4rem;
+  }
+  .muted { color: #999; font-size: 0.9rem; }
+  .status { margin-top: 0.75rem; min-height: 1.4rem; }
+  .status.ok { color: #7ee787; }
+  .status.err { color: #ff7b72; }
+  code.code-reveal {
+    display: inline-block;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #1a1a22;
+    border: 1px solid #7ee787;
+    border-radius: 6px;
+    color: #7ee787;
+    font-size: 1.1rem;
+    letter-spacing: 0.05em;
+  }
+</style>
+</head>
+<body>
+  <h1>Unlock this with AI. Brag if you crack it.</h1>
+
+  <div class="card">
+    <p>Three rounds. Round 1 is plain. Rounds 2 and 3 are built to resist being read by current AI vision models &mdash; deliberately.</p>
+    <p>Round 2 and round 3's content aren't on this page. They're reachable through a link buried in an obfuscated instructions file. Decode it however you want &mdash; hand it to whatever AI you use, or do it yourself.</p>
+    <p>First 10 people to clear all 3 rounds get a code. After that: no more spots.</p>
+    <p><button id="download-btn">Download Bundle</button></p>
+    <p class="muted" id="download-status"></p>
+  </div>
+
+  <div class="card" id="game-card" hidden>
+    <p class="muted">Round <span id="round-num">1</span> of 3</p>
+    <p id="prompt-text"></p>
+    <textarea id="answer-input" placeholder="Type your answer..."></textarea>
+    <p><button id="submit-btn">Submit</button></p>
+    <p class="status" id="game-status"></p>
+  </div>
+
+  <div class="card" id="win-card" hidden>
+    <p>Solved. Your code:</p>
+    <code class="code-reveal" id="win-code"></code>
+  </div>
+
+  <script>
+    const downloadBtn = document.getElementById('download-btn');
+    const downloadStatus = document.getElementById('download-status');
+    const gameCard = document.getElementById('game-card');
+    const roundNum = document.getElementById('round-num');
+    const promptText = document.getElementById('prompt-text');
+    const answerInput = document.getElementById('answer-input');
+    const submitBtn = document.getElementById('submit-btn');
+    const gameStatus = document.getElementById('game-status');
+    const winCard = document.getElementById('win-card');
+    const winCode = document.getElementById('win-code');
+
+    downloadBtn.addEventListener('click', () => {
+      downloadStatus.textContent = 'Downloading...';
+      // Plain navigation, not fetch: lets the browser handle the
+      // Content-Disposition attachment response and save the file directly.
+      window.location.href = '/api/bundle';
+      setTimeout(() => { downloadStatus.textContent = 'If nothing downloaded, check your browser\'s download prompt.'; }, 1500);
+    });
+
+    async function startGame() {
+      gameStatus.textContent = '';
+      const res = await fetch('/api/captcha/start', { method: 'POST' });
+      if (!res.ok) {
+        gameStatus.textContent = 'Could not start. Try again.';
+        gameStatus.className = 'status err';
+        return;
+      }
+      const data = await res.json();
+      gameCard.hidden = false;
+      renderRound(data.round, data.task.prompt);
+    }
+
+    function renderRound(round, prompt) {
+      roundNum.textContent = round;
+      promptText.textContent = prompt;
+      answerInput.value = '';
+      gameStatus.textContent = '';
+      gameStatus.className = 'status';
+      if (round >= 2) {
+        promptText.textContent += ' (The content for this round is behind your decoded reveal link, not on this page.)';
+      }
+    }
+
+    submitBtn.addEventListener('click', async () => {
+      const answer = answerInput.value;
+      submitBtn.disabled = true;
+      const res = await fetch('/api/captcha/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer }),
+      });
+      submitBtn.disabled = false;
+
+      if (!res.ok) {
+        gameStatus.textContent = 'Session expired or invalid. Refresh and start over.';
+        gameStatus.className = 'status err';
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data.done) {
+        gameCard.hidden = true;
+        winCard.hidden = false;
+        winCode.textContent = data.soldOut ? 'No more spots left.' : data.code;
+        return;
+      }
+
+      if (data.correct) {
+        gameStatus.textContent = 'Correct. Advancing...';
+        gameStatus.className = 'status ok';
+        // Need the next round's prompt text - re-fetch via start would issue
+        // a NEW session, so instead just fetch the current task prompt
+        // through a lightweight follow-up start-less path: reload is
+        // simplest and safest for a PoC (cookie already carries new round).
+        location.reload();
+      } else {
+        gameStatus.textContent = 'Not quite. Try again.';
+        gameStatus.className = 'status err';
+      }
+    });
+
+    // Auto-start round 1 on load so the page is playable without extra clicks.
+    startGame();
+  </script>
+</body>
+</html>
